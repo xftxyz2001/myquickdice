@@ -1,19 +1,27 @@
 import random
 import re
+import socket
 import sys
+import threading
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QGuiApplication
-from PyQt6.QtWidgets import QApplication, QHBoxLayout, QLabel, QLineEdit, QListWidget, QPushButton, QSpinBox, QStatusBar, QStyle, QTabWidget, QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QApplication,
+    QHBoxLayout,
+    QInputDialog,
+    QLabel,
+    QLineEdit,
+    QListWidget,
+    QPushButton,
+    QSpinBox,
+    QStatusBar,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 
-# 结果（显示自己上次的执行结果）
-# 单选（表达式、个数 次数）
-# 添加到预设（预设列表：左键执行预设，右键删除）
-# 创建房间（解散房间） 加入房间（退出房间）
-# 用户名 房间代码（ip+端口 base64）
-# 房间成员（列表）（可以@）
-# 对话框（执行 发送）
 class DiceChatApp(QWidget):
 
     # 结果面板（总数 结果）
@@ -81,7 +89,9 @@ class DiceChatApp(QWidget):
             # 去除表达式中d0123456789+以外的字符
             expression = "".join(filter(lambda x: x in "0123456789+d", expression))
             # 校验表达式合法性
-            pattern = r"^(?:(\d+)d(\d+)|d(\d+)|(\d+))(?:\+(?:(\d+)d(\d+)|d(\d+)|(\d+)))*$"
+            pattern = (
+                r"^(?:(\d+)d(\d+)|d(\d+)|(\d+))(?:\+(?:(\d+)d(\d+)|d(\d+)|(\d+)))*$"
+            )
             match = re.match(pattern, expression)
             if not match:
                 return
@@ -129,52 +139,113 @@ class DiceChatApp(QWidget):
 
         w = QWidget(self)
         vbox = QVBoxLayout(w)
-        vbox.addWidget(self._dice())
-        vbox.addWidget(self.lst_chat)
-        vbox.addWidget(w0)
+        vbox.addWidget(self._dice(), 1)
+        vbox.addWidget(self.lst_chat, 4)
+        vbox.addWidget(w0, 1)
         w.setLayout(vbox)
         return w
 
-    def _create_join(self):
-        def create():
-            print("create")
+    # def create_room(self):
+    #     self.is_host = True
+    #     self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    #     self.server_socket.bind(("0.0.0.0", 12345))
+    #     self.server_socket.listen(10)
+    #     self.lst_chat.addItem("房间创建成功，等待其他成员加入...")
 
-        def join():
-            print("join")
+    #     self.btn_room_operate.setText("离开房间")
+    #     threading.Thread(target=self.accept_connections, daemon=True).start()
 
-        btn_create = QPushButton("创建房间")
-        btn_join = QPushButton("加入房间")
+    # def accept_connections(self):
+    #     while True:
+    #         client_socket, addr = self.server_socket.accept()
+    #         self.lst_chat.addItem(f"新成员加入：{addr}")
+    #         self.lst_member.addItem(str(addr))
+    #         threading.Thread(
+    #             target=self.handle_client, args=(client_socket,), daemon=True
+    #         ).start()
 
-        btn_create.clicked.connect(lambda: create())
-        btn_join.clicked.connect(lambda: join())
+    # def handle_client(self, client_socket):
+    #     while True:
+    #         try:
+    #             message = client_socket.recv(1024).decode("utf-8")
+    #             if message:
+    #                 self.lst_chat.addItem(message)
+    #                 self.broadcast_message(message, client_socket)
+    #         except ConnectionResetError:
+    #             break
 
-        w = QWidget(self)
-        vbox = QVBoxLayout(w)
-        vbox.addWidget(btn_create)
-        vbox.addWidget(btn_join)
-        w.setLayout(vbox)
-        return w
+    # def broadcast_message(self, message, sender_socket):
+    #     for i in range(self.lst_member.count()):
+    #         item = self.lst_member.item(i)
+    #         addr = eval(item.text())  # 将字符串解析为元组地址
+    #         if sender_socket.getpeername() != addr:
+    #             try:
+    #                 sender_socket.sendto(message.encode("utf-8"), addr)
+    #             except Exception as e:
+    #                 print(f"消息发送失败: {e}")
 
-    def _room(self):
-        l_room = QLabel("房间列表")
-        self.lst_member = QListWidget(self)
+    # def join_room(self, code):
+    #     self.is_host = False
+    #     self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    #     self.client_socket.connect(("127.0.0.1", 12345))
 
-        w = QWidget(self)
-        vbox = QVBoxLayout(w)
-        vbox.addWidget(l_room, alignment=Qt.AlignmentFlag.AlignHCenter)
-        vbox.addWidget(self.lst_member)
-        w.setLayout(vbox)
-        return w
+    #     self.lst_chat.addItem("成功加入房间")
+
+    #     self.btn_room_operate.setText("离开房间")
+    #     threading.Thread(target=self.receive_messages, daemon=True).start()
+
+    # def receive_messages(self):
+    #     while True:
+    #         try:
+    #             message = self.client_socket.recv(1024).decode("utf-8")
+    #             if message:
+    #                 self.lst_chat.addItem(message)
+    #         except ConnectionResetError:
+    #             break
+
+    # def leave_room(self):
+    #     if self.is_host:
+    #         if self.server_socket:
+    #             self.server_socket.close()
+    #     if self.client_socket:
+    #         self.client_socket.close()
+
+    #     self.lst_history.addItem("你已离开房间")
+    #     self.btn_room_operate.setText("创建/加入房间")
+
+    def room_operate(self):
+        if self.btn_room_operate.text() == "创建/加入房间":
+            dialog = QInputDialog()
+            dialog.setOkButtonText("创建/加入房间")
+            dialog.setCancelButtonText("取消")
+            dialog.setWindowTitle("创建/加入房间")
+            dialog.setLabelText("请输入房间代码（留空则创建房间）")
+            if dialog.exec():
+                code = dialog.textValue()
+                if code == "":
+                    self.create_room()
+                else:
+                    self.join_room(code)
+        elif self.btn_room_operate.text() == "离开房间":
+            self.leave_room()
 
     def _right(self):
         l_history = QLabel("历史记录")
         self.lst_history = QListWidget(self)
 
+        l_room = QLabel("房间成员")
+        self.lst_member = QListWidget(self)
+
+        self.btn_room_operate = QPushButton("创建/加入房间")
+        self.btn_room_operate.clicked.connect(lambda: self.room_operate())
+
         w = QWidget(self)
         vbox = QVBoxLayout(w)
         vbox.addWidget(l_history, alignment=Qt.AlignmentFlag.AlignHCenter)
         vbox.addWidget(self.lst_history)
-        vbox.addWidget(self._create_join())
+        vbox.addWidget(l_room, alignment=Qt.AlignmentFlag.AlignHCenter)
+        vbox.addWidget(self.lst_member)
+        vbox.addWidget(self.btn_room_operate)
         w.setLayout(vbox)
         return w
 
