@@ -131,6 +131,15 @@ class DiceChatApp(QWidget):
         le_chat = QLineEdit()
         btn_send = QPushButton("发送")
 
+        def send():
+            text = le_chat.text()
+            if text:
+                self.lst_chat.addItem(f"我: {text}")
+                self.client_socket.send(text.encode("utf-8"))
+                le_chat.clear()
+
+        btn_send.clicked.connect(lambda: send())
+
         w0 = QWidget(self)
         hbox = QHBoxLayout(w0)
         hbox.addWidget(le_chat, 6)
@@ -145,73 +154,123 @@ class DiceChatApp(QWidget):
         w.setLayout(vbox)
         return w
 
-    # def create_room(self):
-    #     self.is_host = True
-    #     self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    #     self.server_socket.bind(("0.0.0.0", 12345))
-    #     self.server_socket.listen(10)
-    #     self.lst_chat.addItem("房间创建成功，等待其他成员加入...")
+    # 创建房间
+    def create_room(self):
+        self.is_host = True
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.bind(("0.0.0.0", 0))
+        self.server_socket.listen(10)
+        threading.Thread(target=self.accept_connections, daemon=True).start()
+        self.client_sockets = []  # 客户端套接字列表
 
-    #     self.btn_room_operate.setText("离开房间")
-    #     threading.Thread(target=self.accept_connections, daemon=True).start()
+        host, port = self.server_socket.getsockname()
+        self.lst_chat.addItem(f"房间 {host}:{port} 创建成功，等待其他成员加入...")
+        return port
 
-    # def accept_connections(self):
-    #     while True:
-    #         client_socket, addr = self.server_socket.accept()
-    #         self.lst_chat.addItem(f"新成员加入：{addr}")
-    #         self.lst_member.addItem(str(addr))
-    #         threading.Thread(
-    #             target=self.handle_client, args=(client_socket,), daemon=True
-    #         ).start()
+    def broadcast_update_member_list(self):
+        lst_member = []
+        for _, display in self.client_sockets:
+            lst_member.append(display)
+        self.broadcast_message(f"///update{lst_member}")
 
-    # def handle_client(self, client_socket):
-    #     while True:
-    #         try:
-    #             message = client_socket.recv(1024).decode("utf-8")
-    #             if message:
-    #                 self.lst_chat.addItem(message)
-    #                 self.broadcast_message(message, client_socket)
-    #         except ConnectionResetError:
-    #             break
+    # 接受客户端连接
+    def accept_connections(self):
+        while True:
+            client_socket, (host, port) = self.server_socket.accept()
+            display = f"member{random.randint(1,1000)}({host}:{port})"
+            self.client_sockets.append([client_socket, display])
+            threading.Thread(
+                target=self.handle_client, args=(client_socket,), daemon=True
+            ).start()
 
-    # def broadcast_message(self, message, sender_socket):
-    #     for i in range(self.lst_member.count()):
-    #         item = self.lst_member.item(i)
-    #         addr = eval(item.text())  # 将字符串解析为元组地址
-    #         if sender_socket.getpeername() != addr:
-    #             try:
-    #                 sender_socket.sendto(message.encode("utf-8"), addr)
-    #             except Exception as e:
-    #                 print(f"消息发送失败: {e}")
+            self.broadcast_message(f"{display} 加入了房间.", client_socket)
+            self.broadcast_update_member_list()
 
-    # def join_room(self, code):
-    #     self.is_host = False
-    #     self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    #     self.client_socket.connect(("127.0.0.1", 12345))
+    # 处理客户端消息
+    def handle_client(self, client_socket):
+        from_display = "unknown"
+        for socket, display in self.client_sockets:
+            if client_socket == socket:
+                from_display = display
 
-    #     self.lst_chat.addItem("成功加入房间")
+        while True:
+            try:
+                message = client_socket.recv(1024).decode("utf-8")
+                # 空消息
+                if not message:
+                    print("null")
+                # 特殊消息
+                if message.startswith("///"):
+                    # 更改用户名
+                    if message.startswith("///rename"):
+                        new_display = message[9:].strip()
+                        for i in range(len(self.client_sockets)):
+                            if self.client_sockets[i][0] == client_socket:
+                                indexOfAddr = self.client_sockets[i][1].index("(")
+                                self.client_sockets[i][
+                                    1
+                                ] = f"{new_display}({self.client_sockets[i][1].substring(indexOfAddr)})"
+                        self.broadcast_message(
+                            f"{from_display} 更名为 {new_display}.", client_socket
+                        )
+                        self.broadcast_update_member_list()
+                    continue
+                # 普通消息
+                self.broadcast_message(f"{from_display}: {message}", client_socket)
+            except ConnectionResetError:
+                break
 
-    #     self.btn_room_operate.setText("离开房间")
-    #     threading.Thread(target=self.receive_messages, daemon=True).start()
+    # 广播消息
+    def broadcast_message(self, message, sender_socket=None):
+        for client_socket, _ in self.client_sockets:
+            if client_socket != sender_socket:
+                try:
+                    client_socket.send(message.encode("utf-8"))
+                except Exception as e:
+                    print(f"消息发送失败: {e}")
 
-    # def receive_messages(self):
-    #     while True:
-    #         try:
-    #             message = self.client_socket.recv(1024).decode("utf-8")
-    #             if message:
-    #                 self.lst_chat.addItem(message)
-    #         except ConnectionResetError:
-    #             break
+    # 加入房间
+    def join_room(self, code):
+        self.is_client = True
+        host, port = code.split(":")
+        self.client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.client_socket.connect((host, int(port)))
+        threading.Thread(target=self.receive_messages, daemon=True).start()
 
-    # def leave_room(self):
-    #     if self.is_host:
-    #         if self.server_socket:
-    #             self.server_socket.close()
-    #     if self.client_socket:
-    #         self.client_socket.close()
+        self.lst_chat.addItem(f"已加入房间 {host}:{port}")
+        self.btn_room_operate.setText("离开房间")
 
-    #     self.lst_history.addItem("你已离开房间")
-    #     self.btn_room_operate.setText("创建/加入房间")
+    # 接收消息
+    def receive_messages(self):
+        while True:
+            try:
+                message = self.client_socket.recv(1024).decode("utf-8")
+                if not message:
+                    continue
+                if message.startswith("///"):
+                    if message.startswith("///update"):
+                        self.lst_member.clear()
+                        for member in eval(message[9:]):
+                            self.lst_member.addItem(member)
+                    continue
+                self.lst_chat.addItem(message)
+            except ConnectionResetError:
+                break
+
+    def leave_room(self):
+        if self.is_host:
+            if self.server_socket:
+                self.broadcast_message("///leave")
+                self.server_socket.close()
+            self.is_host = False
+        if self.is_client:
+            if self.client_socket:
+                self.client_socket.send("///leave")
+                self.client_socket.close()
+            self.is_client = False
+
+        self.lst_chat.addItem("已离开房间")
+        self.btn_room_operate.setText("创建/加入房间")
 
     def room_operate(self):
         if self.btn_room_operate.text() == "创建/加入房间":
@@ -223,7 +282,8 @@ class DiceChatApp(QWidget):
             if dialog.exec():
                 code = dialog.textValue()
                 if code == "":
-                    self.create_room()
+                    port = self.create_room()
+                    self.join_room(f"localhost:{port}")
                 else:
                     self.join_room(code)
         elif self.btn_room_operate.text() == "离开房间":
@@ -266,6 +326,8 @@ class DiceChatApp(QWidget):
 
     def __init__(self):
         super().__init__()
+        self.is_host = False
+        self.is_client = False
 
         self.status = QStatusBar(self)
         self.status.setSizeGripEnabled(False)
