@@ -135,7 +135,8 @@ class DiceChatApp(QWidget):
             text = le_chat.text()
             if text:
                 self.lst_chat.addItem(f"我: {text}")
-                self.client_socket.send(text.encode("utf-8"))
+                if self.is_client:
+                    self.client_socket.send(text.encode("utf-8"))
                 le_chat.clear()
 
         btn_send.clicked.connect(lambda: send())
@@ -175,16 +176,20 @@ class DiceChatApp(QWidget):
 
     # 接受客户端连接
     def accept_connections(self):
-        while True:
-            client_socket, (host, port) = self.server_socket.accept()
-            display = f"member{random.randint(1,1000)}({host}:{port})"
-            self.client_sockets.append([client_socket, display])
-            threading.Thread(
-                target=self.handle_client, args=(client_socket,), daemon=True
-            ).start()
+        while self.is_host:
+            try:
+                client_socket, (host, port) = self.server_socket.accept()
+                display = f"member{random.randint(1,1000)}({host}:{port})"
+                self.client_sockets.append([client_socket, display])
+                threading.Thread(
+                    target=self.handle_client, args=(client_socket,), daemon=True
+                ).start()
 
-            self.broadcast_message(f"{display} 加入了房间.", client_socket)
-            self.broadcast_update_member_list()
+                self.broadcast_message(f"{display} 加入了房间.", client_socket)
+                self.broadcast_update_member_list()
+            except OSError:
+                print("Server socket has been closed.")
+                break
 
     # 处理客户端消息
     def handle_client(self, client_socket):
@@ -193,14 +198,14 @@ class DiceChatApp(QWidget):
             if client_socket == socket:
                 from_display = display
 
-        while True:
+        while self.is_host:
             try:
                 message = client_socket.recv(1024).decode("utf-8")
                 # 空消息
                 if not message:
-                    print("null")
+                    continue
                 # 特殊消息
-                if message.startswith("///"):
+                elif message.startswith("///"):
                     # 更改用户名
                     if message.startswith("///rename"):
                         new_display = message[9:].strip()
@@ -214,9 +219,15 @@ class DiceChatApp(QWidget):
                             f"{from_display} 更名为 {new_display}.", client_socket
                         )
                         self.broadcast_update_member_list()
-                    continue
+                    elif message.startswith("///quit"):
+                        self.client_sockets.remove([client_socket, from_display])
+                        self.broadcast_message(
+                            f"{from_display} 退出了房间.", client_socket
+                        )
+                        self.broadcast_update_member_list()
                 # 普通消息
-                self.broadcast_message(f"{from_display}: {message}", client_socket)
+                else:
+                    self.broadcast_message(f"{from_display}: {message}", client_socket)
             except ConnectionResetError:
                 break
 
@@ -242,33 +253,48 @@ class DiceChatApp(QWidget):
 
     # 接收消息
     def receive_messages(self):
-        while True:
+        while self.is_client:
             try:
                 message = self.client_socket.recv(1024).decode("utf-8")
+                # 空消息
                 if not message:
                     continue
-                if message.startswith("///"):
+                elif message.startswith("///"):
                     if message.startswith("///update"):
                         self.lst_member.clear()
                         for member in eval(message[9:]):
                             self.lst_member.addItem(member)
-                    continue
-                self.lst_chat.addItem(message)
+                    elif message.startswith("///quit"):
+                        self.lst_chat.addItem("房间已关闭")
+                        self.after_leave_room()
+                else:
+                    self.lst_chat.addItem(message)
             except ConnectionResetError:
                 break
+            except ConnectionAbortedError:
+                break
 
+    # 离开房间
     def leave_room(self):
         if self.is_host:
             if self.server_socket:
-                self.broadcast_message("///leave")
+                self.broadcast_message("///quit")
                 self.server_socket.close()
-            self.is_host = False
-        if self.is_client:
+        elif self.is_client:
             if self.client_socket:
-                self.client_socket.send("///leave")
+                self.client_socket.send("///quit".encode("utf-8"))
                 self.client_socket.close()
+
+        self.after_leave_room()
+
+    def after_leave_room(self):
+        if self.is_host:
+            self.is_host = False
+            self.client_sockets = []
+        elif self.is_client:
             self.is_client = False
 
+        self.lst_member.clear()
         self.lst_chat.addItem("已离开房间")
         self.btn_room_operate.setText("创建/加入房间")
 
@@ -285,6 +311,7 @@ class DiceChatApp(QWidget):
                     port = self.create_room()
                     self.join_room(f"localhost:{port}")
                 else:
+                    code = code.strip().replace("：", ":").replace("。", ".")
                     self.join_room(code)
         elif self.btn_room_operate.text() == "离开房间":
             self.leave_room()
