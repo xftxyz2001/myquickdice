@@ -126,6 +126,10 @@ class DiceChatApp(QWidget):
         w.setLayout(hbox)
         return w
 
+    def update_chat_list(self, item):
+        self.lst_chat.addItem(item)
+        self.lst_chat.scrollToBottom()
+
     def _left(self):
         self.lst_chat = QListWidget(self)
         le_chat = QLineEdit()
@@ -134,7 +138,7 @@ class DiceChatApp(QWidget):
         def send():
             text = le_chat.text()
             if text:
-                self.lst_chat.addItem(f"我: {text}")
+                self.update_chat_list(f"我: {text}")
                 if self.is_client:
                     self.client_socket.send(text.encode("utf-8"))
                 le_chat.clear()
@@ -165,7 +169,7 @@ class DiceChatApp(QWidget):
         self.client_sockets = []  # 客户端套接字列表
 
         host, port = self.server_socket.getsockname()
-        self.lst_chat.addItem(f"房间 {host}:{port} 创建成功，等待其他成员加入...")
+        self.update_chat_list(f"房间 {host}:{port} 创建成功，等待其他成员加入...")
         return port
 
     def broadcast_update_member_list(self):
@@ -209,14 +213,15 @@ class DiceChatApp(QWidget):
                     # 更改用户名
                     if message.startswith("///rename"):
                         new_display = message[9:].strip()
+                        new_display_full = ""
                         for i in range(len(self.client_sockets)):
                             if self.client_sockets[i][0] == client_socket:
                                 indexOfAddr = self.client_sockets[i][1].index("(")
-                                self.client_sockets[i][
-                                    1
-                                ] = f"{new_display}({self.client_sockets[i][1].substring(indexOfAddr)})"
+                                new_display_full = f"{new_display}{self.client_sockets[i][1][indexOfAddr:]}"
+                                self.client_sockets[i][1] = new_display_full
+                                break
                         self.broadcast_message(
-                            f"{from_display} 更名为 {new_display}.", client_socket
+                            f"{from_display} 更名为 {new_display_full}.", client_socket
                         )
                         self.broadcast_update_member_list()
                     elif message.startswith("///quit"):
@@ -248,8 +253,18 @@ class DiceChatApp(QWidget):
         self.client_socket.connect((host, int(port)))
         threading.Thread(target=self.receive_messages, daemon=True).start()
 
-        self.lst_chat.addItem(f"已加入房间 {host}:{port}")
+        self.update_chat_list(f"已加入房间 {host}:{port}")
         self.btn_room_operate.setText("离开房间")
+
+        dialog = QInputDialog()
+        dialog.setOkButtonText("确定")
+        dialog.setCancelButtonText("取消")
+        dialog.setWindowTitle("请输入用户名")
+        dialog.setLabelText("请输入用户名")
+        if dialog.exec():
+            name = dialog.textValue()
+            if name != "":
+                self.client_socket.send(f"///rename{name}".encode("utf-8"))
 
     # 接收消息
     def receive_messages(self):
@@ -265,10 +280,10 @@ class DiceChatApp(QWidget):
                         for member in eval(message[9:]):
                             self.lst_member.addItem(member)
                     elif message.startswith("///quit"):
-                        self.lst_chat.addItem("房间已关闭")
+                        self.update_chat_list("房间已关闭")
                         self.after_leave_room()
                 else:
-                    self.lst_chat.addItem(message)
+                    self.update_chat_list(message)
             except ConnectionResetError:
                 break
             except ConnectionAbortedError:
@@ -295,7 +310,7 @@ class DiceChatApp(QWidget):
             self.is_client = False
 
         self.lst_member.clear()
-        self.lst_chat.addItem("已离开房间")
+        self.update_chat_list("已离开房间")
         self.btn_room_operate.setText("创建/加入房间")
 
     def room_operate(self):
