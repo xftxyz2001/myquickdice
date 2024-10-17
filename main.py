@@ -117,6 +117,11 @@ class DiceChatApp(QWidget):
             self.le_sum.setText(s)
             self.le_result.setText(res)
 
+            text = f"投掷<{expression}>的结果为{s}[{res}]"
+            self.update_chat_list(f"我: {text}")
+            if self.is_client:
+                self.client_socket.send(text.encode("utf-8"))
+
         btn_execute.clicked.connect(lambda: execute())
 
         w = QWidget(self)
